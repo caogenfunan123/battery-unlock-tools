@@ -53,7 +53,6 @@ module_param(enable, uint, 0644);
 static unsigned int max_prop = 160;
 module_param(max_prop, uint, 0644);
 static unsigned int scan = 0;
-module_param(scan, uint, 0644);
 static unsigned int scan_done = 0;
 module_param(scan_done, uint, 0444);
 

@@ -63,8 +63,7 @@ static int scan_pre(struct kprobe *p, struct pt_regs *regs)
 	prop   = msg[REQ_PROP_OFF / 4];
 	val    = msg[REQ_VALUE_OFF / 4];
 
-	pr_info("k60_scan: opcode=0x%x prop=%u val=%u (msg=%px)
-",
+	pr_info("k60_scan: opcode=0x%x prop=%u val=%u (msg=%px)\n",
 		opcode, prop, val, (void *)msg);
 	count++;
 	return 0;

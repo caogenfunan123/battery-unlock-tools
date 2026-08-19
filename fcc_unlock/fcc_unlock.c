@@ -1,18 +1,36 @@
 // SPDX-License-Identifier: GPL-2.0-only
+/*
+ * fcc_unlock v3.0 - Redmi K60 (mondrian) battery capacity unlock
+ *
+ * Addresses are passed via module params (read from /proc/kallsyms
+ * in userspace by load_fcc.sh). Module itself references only basic
+ * exported kernel symbols - no file I/O, no VFS namespace, no
+ * kallsyms_lookup_name (GKI does not export it).
+ *
+ * insmod fcc_unlock.ko chg_write=0x<addr> prop_map=0x<addr> psy_get=0x<addr>
+ */
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/uaccess.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 
 #define PMIC_GLINK_OWNER_XIAOMI_BATTERY_CHG    0x800A
 #define PMIC_GLINK_CMD_REQ                     1
 #define BC_XM_STATUS_SET                       0x51
 #define XM_PROP_FG1_FCC                        128
 #define FCC_TARGET_uAh                          6500000
+
+/* module params: symbol addresses from /proc/kallsyms (userspace) */
+static unsigned long chg_write = 0;
+static unsigned long prop_map = 0;
+static unsigned long psy_get = 0;
+module_param(chg_write, ulong, 0);
+module_param(prop_map, ulong, 0);
+module_param(psy_get, ulong, 0);
+
+/* hard-coded offsets (compile-time constant for this kernel build) */
+#define BCDEV_PSY_LIST_MAP_OFF 0x150
 
 struct pmic_glink_hdr { u32 owner; u32 type; u32 opcode; } __packed;
 struct battery_charger_req_msg {
@@ -23,128 +41,92 @@ struct battery_charger_req_msg {
 } __packed;
 
 typedef int (*battery_chg_write_t)(void *, struct battery_charger_req_msg *, int);
-
-/* Find kernel symbol address by reading /proc/kallsyms */
-static void *find_sym(const char *name)
-{
-    struct file *f;
-    loff_t pos = 0;
-    char *buf;
-    int ret;
-    void *addr = NULL;
-    int name_len = strlen(name);
-
-    f = filp_open("/proc/kallsyms", O_RDONLY, 0);
-    if (IS_ERR(f)) {
-        pr_err("fcc: cannot open /proc/kallsyms\n");
-        return NULL;
-    }
-
-    buf = vmalloc(65536);
-    if (!buf) {
-        filp_close(f, NULL);
-        return NULL;
-    }
-
-    ret = kernel_read(f, buf, 65536, &pos);
-    if (ret > 0) {
-        char *p = buf;
-        char *end = buf + ret;
-        while (p < end) {
-            char *nl = strchr(p, '\n');
-            if (!nl) break;
-            *nl = '\0';
-            /* Format: "ADDRESS TYPE name" */
-            char *type_start = strchr(p, ' ');
-            if (type_start) {
-                type_start++;
-                char *name_start = strchr(type_start, ' ');
-                if (name_start) {
-                    name_start++;
-                    if (strcmp(name_start, name) == 0) {
-                        unsigned long val;
-                        if (sscanf(p, "%lx", &val) == 1 && val) {
-                            addr = (void *)val;
-                            break;
-                        }
-                    }
-                }
-            }
-            p = nl + 1;
-        }
-    }
-
-    vfree(buf);
-    filp_close(f, NULL);
-    return addr;
-}
-
-static void *find_bcdev(void)
-{
-    struct power_supply *psy;
-    void *(*psy_get)(const char *);
-    void *battery_prop_map;
-    unsigned long *p;
-    int i;
-
-    psy_get = find_sym("power_supply_get_by_name");
-    if (!psy_get) { pr_err("fcc: no power_supply_get_by_name\n"); return NULL; }
-
-    psy = psy_get("battery");
-    if (!psy) { pr_err("fcc: no battery psy\n"); return NULL; }
-
-    battery_prop_map = find_sym("battery_prop_map");
-    if (!battery_prop_map) { pr_err("fcc: no battery_prop_map\n"); return NULL; }
-
-    p = (unsigned long *)psy;
-    for (i = 0; i < 0x200; i += 8) {
-        if (p[i/8] == (unsigned long)battery_prop_map) {
-            void *bcdev = (void *)((unsigned long)psy + i - 0x150);
-            pr_info("fcc: found bcdev at %p (offset 0x%x)\n", bcdev, i);
-            return bcdev;
-        }
-    }
-
-    pr_err("fcc: battery_prop_map not found in psy struct\n");
-    return NULL;
-}
+typedef void *(*psy_get_t)(const char *);
 
 static int __init fcc_unlock_init(void)
 {
-    battery_chg_write_t battery_chg_write_fn;
-    void *bcdev;
+    battery_chg_write_t write_fn;
+    psy_get_t psy_get_fn;
     struct battery_charger_req_msg msg;
-    int ret;
+    void *psy;
+    unsigned long *p;
+    void *bcdev = NULL;
+    int i, ret;
 
-    pr_info("fcc: starting\n");
+    pr_info("fcc: v3.0 starting (chg_write=0x%lx prop_map=0x%lx psy_get=0x%lx)
+",
+            chg_write, prop_map, psy_get);
 
-    bcdev = find_bcdev();
-    if (!bcdev) { pr_err("fcc: no bcdev\n"); return -ENODEV; }
+    if (!chg_write || !prop_map || !psy_get) {
+        pr_err("fcc: missing addresses - use load_fcc.sh to pass params
+");
+        return -EINVAL;
+    }
 
-    battery_chg_write_fn = find_sym("battery_chg_write");
-    if (!battery_chg_write_fn) { pr_err("fcc: no battery_chg_write\n"); return -ENODEV; }
+    write_fn = (battery_chg_write_t)chg_write;
+    psy_get_fn = (psy_get_t)psy_get;
+
+    psy = psy_get_fn("battery");
+    if (!psy) {
+        pr_err("fcc: power_supply_get_by_name(battery) failed
+");
+        return -ENODEV;
+    }
+    pr_info("fcc: psy at %p
+", psy);
+
+    /* scan psy struct for a pointer equal to battery_prop_map.
+     * battery_prop_map lives at bcdev + 0x150 (psy_list[0].map).
+     * found at psy+offset i -> bcdev = psy + i - 0x150 */
+    p = (unsigned long *)psy;
+    for (i = 0; i < 0x200; i += 8) {
+        if (p[i/8] == prop_map) {
+            bcdev = (void *)((unsigned long)psy + i - BCDEV_PSY_LIST_MAP_OFF);
+            pr_info("fcc: prop_map at psy+0x%x, bcdev=0x%lx
+",
+                    i, (unsigned long)bcdev);
+            break;
+        }
+    }
+
+    if (!bcdev) {
+        pr_err("fcc: battery_prop_map (0x%lx) not found in psy struct
+", prop_map);
+        return -ENODEV;
+    }
 
     memset(&msg, 0, sizeof(msg));
-    msg.hdr.owner    = PMIC_GLINK_OWNER_XIAOMI_BATTERY_CHG;
-    msg.hdr.type     = PMIC_GLINK_CMD_REQ;
-    msg.hdr.opcode   = BC_XM_STATUS_SET;
-    msg.battery_id   = 0;
-    msg.property_id  = XM_PROP_FG1_FCC;
-    msg.value        = FCC_TARGET_uAh;
+    msg.hdr.owner   = PMIC_GLINK_OWNER_XIAOMI_BATTERY_CHG;
+    msg.hdr.type    = PMIC_GLINK_CMD_REQ;
+    msg.hdr.opcode  = BC_XM_STATUS_SET;
+    msg.battery_id  = 0;
+    msg.property_id = XM_PROP_FG1_FCC;
+    msg.value       = FCC_TARGET_uAh;
 
-    pr_info("fcc: writing fg1_fcc = %d\n", FCC_TARGET_uAh);
-    ret = battery_chg_write_fn(bcdev, &msg, sizeof(msg));
-    pr_info("fcc: battery_chg_write returned %d\n", ret);
+    pr_info("fcc: writing fg1_fcc = %d uAh
+", FCC_TARGET_uAh);
+    ret = write_fn(bcdev, &msg, sizeof(msg));
+    pr_info("fcc: battery_chg_write returned %d
+", ret);
 
-    if (ret == 0) pr_info("fcc: SUCCESS\n");
-    else pr_warn("fcc: write failed ret=%d\n", ret);
+    if (ret == 0)
+        pr_info("fcc: SUCCESS - check /sys/class/qcom-battery/fg1_fcc
+");
+    else
+        pr_warn("fcc: write failed ret=%d
+", ret);
 
     return 0;
 }
 
-static void __exit fcc_unlock_exit(void) { pr_info("fcc: unloaded\n"); }
+static void __exit fcc_unlock_exit(void)
+{
+    pr_info("fcc: unloaded
+");
+}
+
 module_init(fcc_unlock_init);
 module_exit(fcc_unlock_exit);
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("FCC unlock for Redmi K60");
-MODULE_VERSION("2.0");
+MODULE_DESCRIPTION("FCC unlock for Redmi K60 (params via userspace)");
+MODULE_VERSION("3.0");

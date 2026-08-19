@@ -44,8 +44,7 @@ static void *find_bcdev(void)
     psy_get = resolve_sym("power_supply_get_by_name");
     if (!psy_get) return NULL;
     psy = psy_get("battery");
-    if (!psy) { pr_err("fcc: no battery
-"); return NULL; }
+    if (!psy) { pr_err("fcc: no battery\n"); return NULL; }
 
     battery_prop_map = resolve_sym("battery_prop_map");
     if (battery_prop_map) {
@@ -66,17 +65,13 @@ static int __init fcc_unlock_init(void)
     struct battery_charger_req_msg msg;
     int ret;
 
-    pr_info("fcc: starting
-");
+    pr_info("fcc: starting\n");
     battery_chg_write_fn = resolve_sym("battery_chg_write");
-    if (!battery_chg_write_fn) { pr_err("fcc: no battery_chg_write
-"); return -ENODEV; }
+    if (!battery_chg_write_fn) { pr_err("fcc: no battery_chg_write\n"); return -ENODEV; }
 
     bcdev = find_bcdev();
-    if (!bcdev) { pr_err("fcc: no bcdev
-"); return -ENODEV; }
-    pr_info("fcc: bcdev at %p
-", bcdev);
+    if (!bcdev) { pr_err("fcc: no bcdev\n"); return -ENODEV; }
+    pr_info("fcc: bcdev at %p\n", bcdev);
 
     memset(&msg, 0, sizeof(msg));
     msg.hdr.owner = PMIC_GLINK_OWNER_XIAOMI_BATTERY_CHG;
@@ -86,20 +81,15 @@ static int __init fcc_unlock_init(void)
     msg.property_id = XM_PROP_FG1_FCC;
     msg.value = FCC_TARGET_uAh;
 
-    pr_info("fcc: writing fg1_fcc = %d
-", FCC_TARGET_uAh);
+    pr_info("fcc: writing fg1_fcc = %d\n", FCC_TARGET_uAh);
     ret = battery_chg_write_fn(bcdev, &msg, sizeof(msg));
-    pr_info("fcc: battery_chg_write returned %d
-", ret);
-    if (ret == 0) pr_info("fcc: SUCCESS
-");
-    else pr_warn("fcc: write failed ret=%d
-", ret);
+    pr_info("fcc: battery_chg_write returned %d\n", ret);
+    if (ret == 0) pr_info("fcc: SUCCESS\n");
+    else pr_warn("fcc: write failed ret=%d\n", ret);
     return 0;
 }
 
-static void __exit fcc_unlock_exit(void) { pr_info("fcc: unloaded
-"); }
+static void __exit fcc_unlock_exit(void) { pr_info("fcc: unloaded\n"); }
 module_init(fcc_unlock_init);
 module_exit(fcc_unlock_exit);
 MODULE_LICENSE("GPL v2");

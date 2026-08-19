@@ -53,13 +53,11 @@ static int __init fcc_unlock_init(void)
     void *bcdev = NULL;
     int i, ret;
 
-    pr_info("fcc: v3.0 starting (chg_write=0x%lx prop_map=0x%lx psy_get=0x%lx)
-",
+    pr_info("fcc: v3.0 starting (chg_write=0x%lx prop_map=0x%lx psy_get=0x%lx)\n",
             chg_write, prop_map, psy_get);
 
     if (!chg_write || !prop_map || !psy_get) {
-        pr_err("fcc: missing addresses - use load_fcc.sh to pass params
-");
+        pr_err("fcc: missing addresses - use load_fcc.sh to pass params\n");
         return -EINVAL;
     }
 
@@ -68,12 +66,10 @@ static int __init fcc_unlock_init(void)
 
     psy = psy_get_fn("battery");
     if (!psy) {
-        pr_err("fcc: power_supply_get_by_name(battery) failed
-");
+        pr_err("fcc: power_supply_get_by_name(battery) failed\n");
         return -ENODEV;
     }
-    pr_info("fcc: psy at %p
-", psy);
+    pr_info("fcc: psy at %p\n", psy);
 
     /* scan psy struct for a pointer equal to battery_prop_map.
      * battery_prop_map lives at bcdev + 0x150 (psy_list[0].map).
@@ -82,16 +78,14 @@ static int __init fcc_unlock_init(void)
     for (i = 0; i < 0x200; i += 8) {
         if (p[i/8] == prop_map) {
             bcdev = (void *)((unsigned long)psy + i - BCDEV_PSY_LIST_MAP_OFF);
-            pr_info("fcc: prop_map at psy+0x%x, bcdev=0x%lx
-",
+            pr_info("fcc: prop_map at psy+0x%x, bcdev=0x%lx\n",
                     i, (unsigned long)bcdev);
             break;
         }
     }
 
     if (!bcdev) {
-        pr_err("fcc: battery_prop_map (0x%lx) not found in psy struct
-", prop_map);
+        pr_err("fcc: battery_prop_map (0x%lx) not found in psy struct\n", prop_map);
         return -ENODEV;
     }
 
@@ -103,26 +97,21 @@ static int __init fcc_unlock_init(void)
     msg.property_id = XM_PROP_FG1_FCC;
     msg.value       = FCC_TARGET_uAh;
 
-    pr_info("fcc: writing fg1_fcc = %d uAh
-", FCC_TARGET_uAh);
+    pr_info("fcc: writing fg1_fcc = %d uAh\n", FCC_TARGET_uAh);
     ret = write_fn(bcdev, &msg, sizeof(msg));
-    pr_info("fcc: battery_chg_write returned %d
-", ret);
+    pr_info("fcc: battery_chg_write returned %d\n", ret);
 
     if (ret == 0)
-        pr_info("fcc: SUCCESS - check /sys/class/qcom-battery/fg1_fcc
-");
+        pr_info("fcc: SUCCESS - check /sys/class/qcom-battery/fg1_fcc\n");
     else
-        pr_warn("fcc: write failed ret=%d
-", ret);
+        pr_warn("fcc: write failed ret=%d\n", ret);
 
     return 0;
 }
 
 static void __exit fcc_unlock_exit(void)
 {
-    pr_info("fcc: unloaded
-");
+    pr_info("fcc: unloaded\n");
 }
 
 module_init(fcc_unlock_init);
